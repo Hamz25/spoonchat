@@ -64,6 +64,7 @@ setTyping: (conversationId, userId, username, isTyping) =>
     }
     }),
 
+
   //Online status
 onlineUsers: new Set(),
   // Set of user IDs currently connected via WebSocket
@@ -79,6 +80,25 @@ setUserOffline: (userId) =>
     next.delete(userId)
     return { onlineUsers: next }
     }),
+
+updateMessage: (conversationId, messageId, updates) =>
+    set((state) => ({
+      messages: {
+        ...state.messages,
+        [conversationId]: (state.messages[conversationId] || []).map((msg) =>
+          msg.id === messageId ? { ...msg, ...updates } : msg
+        ),
+      }
+    }))
 }))
 
 export default useStore
+
+export const getState = () => useStore.getState()
+export const setState = (patch) => useStore.setState(
+  typeof patch === 'function' ? patch : (s) => ({ ...s, ...patch })
+)
+export function useGlobal(selector) {
+  return useStore(selector)
+}
+

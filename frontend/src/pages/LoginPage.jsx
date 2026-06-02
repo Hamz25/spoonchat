@@ -1,80 +1,148 @@
-import { useState } from 'react'
-import { useAuth } from '../hooks/useAuth'
+// LoginPage — sign-in form with validation and error handling.
 
-export default function LoginPage() {
-  const { login } = useAuth()
-  const [form, setForm] = useState({ username: '', password: '' })
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
+import { useState } from 'react';
+import { useAuth } from '../hooks/useAuth';
+import { useToast } from '../context/ToastContext';
+import { Input, Button } from '../components/ui';
+import { classifyError, mapFieldErrors, ErrorType } from '../utils/errors';
 
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    setLoading(true)
-    setError('')
+export function LoginPage({ onSuccess, onSwitchToRegister }) {
+  const { login }  = useAuth();
+  const toast      = useToast();
+  const [form, setForm]     = useState({ username: '', password: '' });
+  const [errors, setErrors] = useState({});
+  const [loading, setLoading] = useState(false);
+
+  function validate() {
+    const e = {};
+    if (!form.username.trim()) e.username = 'Required';
+    if (!form.password)        e.password = 'Required';
+    return e;
+  }
+
+  async function handleSubmit(ev) {
+    ev.preventDefault();
+    const e = validate();
+    if (Object.keys(e).length) { setErrors(e); return; }
+    setErrors({});
+    setLoading(true);
+
     try {
-      await login(form.username, form.password)
-      window.location.href = '/'
+      await login(form.username, form.password);
+      onSuccess();
     } catch (err) {
-      setError(err.response?.data?.detail || 'Login failed')
+      const classified = classifyError(err);
+      if (classified.type === ErrorType.AUTH) {
+        // Don't leak which field is wrong
+        setErrors({ password: 'Invalid username or password' });
+      } else if (classified.type === ErrorType.VALIDATION) {
+        setErrors(mapFieldErrors(err.response?.data));
+      } else {
+        toast(classified.message, 'error');
+      }
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
   }
 
   return (
-    <div style={styles.container}>
-      <div style={styles.card}>
-        <h1 style={styles.title}>SpoonChat</h1>
-        <p style={styles.subtitle}>End-to-end encrypted messaging</p>
-        <form onSubmit={handleSubmit} style={styles.form}>
-          <input
-            style={styles.input}
-            placeholder="Username"
-            value={form.username}
-            onChange={(e) => setForm({ ...form, username: e.target.value })}
-          />
-          <input
-            style={styles.input}
-            type="password"
-            placeholder="Password"
-            value={form.password}
-            onChange={(e) => setForm({ ...form, password: e.target.value })}
-          />
-          {error && <p style={styles.error}>{error}</p>}
-          <button style={styles.button} type="submit" disabled={loading}>
-            {loading ? 'Logging in...' : 'Login'}
+    <AuthLayout>
+      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        <div>
+          <h2 style={{ fontWeight: 600, marginBottom: 4 }}>Welcome back</h2>
+          <p style={{ color: 'var(--text-1)', fontSize: 13 }}>Sign in to your account</p>
+        </div>
+
+        <Input
+          label="USERNAME"
+          placeholder="spoon"
+          value={form.username}
+          onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
+          error={errors.username}
+          autoFocus
+        />
+        <Input
+          label="PASSWORD"
+          type="password"
+          placeholder="••••••••"
+          value={form.password}
+          onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+          error={errors.password}
+        />
+
+        <Button
+          type="submit"
+          loading={loading}
+          style={{ width: '100%', justifyContent: 'center' }}
+        >
+          Sign in
+        </Button>
+
+        <p style={{ textAlign: 'center', fontSize: 13, color: 'var(--text-1)' }}>
+          No account?{' '}
+          <button
+            type="button"
+            onClick={onSwitchToRegister}
+            style={{
+              background: 'none', border: 'none',
+              color: 'var(--accent)', cursor: 'pointer',
+              fontSize: 13, fontFamily: 'var(--font-sans)',
+            }}
+          >
+            Create one
           </button>
-        </form>
-      </div>
-    </div>
-  )
+        </p>
+      </form>
+    </AuthLayout>
+  );
 }
 
-const styles = {
-  container: {
-    height: '100vh', display: 'flex',
-    alignItems: 'center', justifyContent: 'center',
-    background: '#0f0f0f',
-  },
-  card: {
-    background: '#1a1a1a', padding: '2.5rem',
-    borderRadius: '12px', width: '360px',
-    border: '1px solid #2a2a2a',
-  },
-  title: { color: '#ffffff', margin: 0, fontSize: '1.8rem' },
-  subtitle: { color: '#666', marginTop: '0.25rem', marginBottom: '1.5rem' },
-  form: { display: 'flex', flexDirection: 'column', gap: '0.75rem' },
-  input: {
-    padding: '0.75rem', borderRadius: '8px',
-    border: '1px solid #333', background: '#111',
-    color: '#fff', fontSize: '0.95rem',
-  },
-  button: {
-    padding: '0.75rem', borderRadius: '8px',
-    background: '#E8490F', color: '#fff',
-    border: 'none', cursor: 'pointer',
-    fontSize: '1rem', fontWeight: '500',
-    marginTop: '0.5rem',
-  },
-  error: { color: '#ff4444', fontSize: '0.875rem', margin: 0 },
+// ─── Shared auth layout ───────────────────────────────────────────
+
+export function AuthLayout({ children }) {
+  return (
+    <div style={{
+      minHeight: '100vh',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'var(--bg-0)',
+      backgroundImage: [
+        'radial-gradient(ellipse at 20% 50%, rgba(232,73,15,0.04) 0%, transparent 60%)',
+        'radial-gradient(ellipse at 80% 20%, rgba(88,166,255,0.04) 0%, transparent 60%)',
+      ].join(', '),
+    }}>
+      <div style={{ width: '100%', maxWidth: 400, padding: 16, animation: 'fadeIn 0.3s ease' }}>
+        {/* Logo */}
+        <div style={{ textAlign: 'center', marginBottom: 40 }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+            <div style={{
+              width: 36, height: 36, background: 'var(--accent)',
+              borderRadius: 8, display: 'flex', alignItems: 'center',
+              justifyContent: 'center', fontSize: 18,
+            }}>
+              🥄
+            </div>
+            <span style={{
+              fontSize: 24, fontWeight: 700,
+              fontFamily: 'var(--font-mono)', letterSpacing: '-0.02em',
+            }}>
+              SpoonChat
+            </span>
+          </div>
+          <p style={{ color: 'var(--text-1)', fontSize: 13, fontFamily: 'var(--font-mono)' }}>
+            end-to-end encrypted · private
+          </p>
+        </div>
+
+        {/* Card */}
+        <div style={{
+          background: 'var(--bg-1)',
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-lg)',
+          padding: 32, boxShadow: 'var(--shadow)',
+        }}>
+          {children}
+        </div>
+      </div>
+    </div>
+  );
 }

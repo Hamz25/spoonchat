@@ -1,181 +1,191 @@
-import { useEffect, useRef } from 'react'
-import { chatAPI } from '../api'
-import { decryptMessage, loadKeyPair } from '../crypto'
-import { useWebSocket } from '../hooks/useWebSocket'
-import MessageBubble from '../components/MessageBubble'
-import MessageInput from '../components/MessageInput'
-import useStore from '../store'
+// ChatPage — the main chat interface.
+// Composes Sidebar, ConversationHeader, MessageList,
+// TypingIndicator, ConnectionBar, and MessageInput.
 
-function ConversationPanel({ conversation }) {
-  const currentUser = useStore((s) => s.currentUser)
-  const messages = useStore((s) => s.messages[conversation.id] || [])
-  const typingUsers = useStore((s) => s.typingUsers[conversation.id] || {})
-  const setMessages = useStore((s) => s.setMessages)
-  const bottomRef = useRef(null)
+import { useEffect, useState } from 'react';
+import { Sidebar }             from '../components/Sidebar';
+import { ConversationHeader }  from '../components/ConversationHeader';
+import { MessageList }         from '../components/MessageList';
+import { MessageInput }        from '../components/MessageInput';
+import { TypingIndicator, ConnectionBar } from '../components/StatusIndicators';
+import { NewDMModal, NewGroupModal }       from '../components/ConversationModals';
+import { Button }              from '../components/ui';
+import { useWebSocket }        from '../hooks/useWebSocket';
+import { useAuth }             from '../hooks/useAuth';
+import { useToast }            from '../context/ToastContext';
+import { useGlobal, setState } from '../store';
+import { wsManager }           from '../ws/wsManager';
+import { chatAPI }             from '../api';
+import { classifyError }       from '../utils/errors';
+import { decryptMessage, loadKeyPair }      from '../crypto';
 
-  // Get the other participant's public key for encryption
-  const otherParticipant = conversation.participants.find(
-    (p) => p.id !== currentUser?.id
-  )
+export function ChatPage({ onLogout }) {
+  const toast         = useToast();
+  const { logout }    = useAuth();
+  const user          = useGlobal(s => s.currentUser);
+  const conversations = useGlobal(s => s.conversations) || [];
+  const activeConvId  = useGlobal(s => s.activeConversationId);
+  const online        = useGlobal(s => s.onlineUsers);
 
-  const { sendMessage, sendTyping } = useWebSocket(
-    conversation.id,
-    conversation.participants
-  )
+  const messagesMap   = useGlobal(s => s.messages);
+  const typingMap     = useGlobal(s => s.typingUsers);
+  const messages      = messagesMap[activeConvId] || [];
+  const typing        = typingMap[activeConvId] || {};
 
+  const [modal, setModal] = useState(null); // 'dm' | 'group' | null
+
+  const activeConv = conversations.find(c => c.id === activeConvId) ?? null;
+
+  // Typing names — exclude the current user
+  const typingNames = Object.values(typing).filter(n => n !== user?.username);
+
+  // WebSocket for the active conversation
+  const { status: wsStatus, sendMessage, sendTyping } =
+    useWebSocket(activeConvId, activeConv?.participants ?? []);
+
+  // ── Load conversations on mount ──────────────────────────────
   useEffect(() => {
-    // Load message history when conversation opens
-    chatAPI.getMessages(conversation.id).then(async (res) => {
-      const myKeys = loadKeyPair()
-      if (!myKeys) return
+    chatAPI.getConversations()
+      .then(response => {
+        const data = response.data;
+        setState({ conversations: data });
+        if (data.length && !activeConvId) {
+          setState({ activeConversationId: data[0].id });
+        }
+      })
+      .catch(err => toast(classifyError(err).message, 'error'));
+  }, []);
 
-      // Decrypt all historical messages
-      const decrypted = await Promise.all(
-        res.data.map(async (msg) => {
-          const sender = conversation.participants.find(
-            (p) => p.id === msg.sender_id
-          )
-          const plaintext = sender?.public_key
-            ? await decryptMessage(
-                msg.ciphertext,
-                msg.nonce,
-                sender.public_key,
-                myKeys.privateKey
-              )
-            : null
-          return { ...msg, decrypted: plaintext || '[Encrypted]' }
-        })
-      )
-      setMessages(conversation.id, decrypted)
-    })
-  }, [conversation.id])
+  // ── Load message history when conversation changes ───────────
+useEffect(() => {
+    if (!activeConvId) return;
 
-  // Auto-scroll to bottom when new messages arrive
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    chatAPI.getMessages(activeConvId)
+      .then(async (response) => {
+        const data = response.data;
+        const myKeys = loadKeyPair();
+        
+        const decrypted = await Promise.all(
+          data.map(async msg => {
+            // 2. Find the sender's public key from the participants list
+            const sender = activeConv?.participants.find(p => p.id !== user?.id);
+            
+            let plaintext = null;
+            if (myKeys && sender?.public_key) {
+              plaintext = await decryptMessage(
+                msg.ciphertext, 
+                msg.nonce, 
+                sender.public_key, // sender's public key
+                myKeys.privateKey  // private key
+              );
+            }
 
-  const handleSend = async (text) => {
-    if (!otherParticipant?.public_key) {
-      alert("Recipient hasn't set up encryption yet")
-      return
+            return {
+              ...msg,
+              decrypted: plaintext || '[Decryption failed]',
+            };
+          })
+        );
+
+        setState(s => ({
+          messages: { ...s.messages, [activeConvId]: decrypted },
+        }));
+      })
+      .catch(err => toast(classifyError(err).message, 'error'));
+  }, [activeConvId, activeConv]);
+
+  // ── Cleanup WebSocket on unmount ─────────────────────────────
+  useEffect(() => () => wsManager.disconnect(), []);
+
+  // ── Handlers ─────────────────────────────────────────────────
+
+  async function handleSend(text) {
+    const recipient = activeConv?.participants.find(p => p.id !== user?.id);
+    if (!recipient?.public_key) {
+      toast("Cannot send: The other user hasn't set up their encryption keys.", "error");
+      return;
     }
-    await sendMessage(text, otherParticipant.public_key)
+    const ok = await sendMessage(text, recipient?.public_key);
+    if (!ok) toast('Message failed — check your connection', 'error');
   }
 
-  const typingList = Object.values(typingUsers).filter(
-    (u) => u !== currentUser?.username
-  )
+  function handleLogout() {
+    wsManager.disconnect();
+    logout();
+    onLogout();
+  }
+
+  // ─────────────────────────────────────────────────────────────
 
   return (
-    <div style={styles.panel}>
-      <div style={styles.header}>
-        <span style={styles.headerName}>
-          {conversation.is_group
-            ? conversation.name
-            : otherParticipant?.username}
-        </span>
-        <span style={styles.headerSub}>🔒 End-to-end encrypted</span>
-      </div>
-      <div style={styles.messages}>
-        {messages.map((msg) => (
-          <MessageBubble
-            key={msg.id}
-            message={msg}
-            isOwn={msg.sender_id === currentUser?.id}
+    <div style={{ display: 'flex', height: '100vh', background: 'var(--bg-0)', overflow: 'hidden' }}>
+
+      {/* ── Sidebar ─────────────────────────────────────────── */}
+      <Sidebar
+        onNewDM={()    => setModal('dm')}
+        onNewGroup={()  => setModal('group')}
+        onLogout={handleLogout}
+      />
+
+      {/* ── Main area ───────────────────────────────────────── */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <ConversationHeader
+          conversation={activeConv}
+          currentUserId={user?.id}
+          online={online}
+        />
+        <ConnectionBar status={wsStatus} />
+
+        {activeConv ? (
+          <>
+            <MessageList
+              messages={messages}
+              currentUserId={user?.id}
+              isGroup={activeConv.is_group}
+            />
+            <TypingIndicator names={typingNames} />
+            <MessageInput
+              onSend={handleSend}
+              onTyping={sendTyping}
+              disabled={wsStatus === 'disconnected'}
+            />
+          </>
+        ) : (
+          <EmptyState
+            onNewDM={()    => setModal('dm')}
+            onNewGroup={()  => setModal('group')}
           />
-        ))}
-        {typingList.length > 0 && (
-          <p style={styles.typing}>
-            {typingList.join(', ')} {typingList.length === 1 ? 'is' : 'are'} typing...
-          </p>
         )}
-        <div ref={bottomRef} />
       </div>
-      <MessageInput onSend={handleSend} onTyping={sendTyping} />
+
+      {/* ── Modals ──────────────────────────────────────────── */}
+      {modal === 'dm'    && <NewDMModal    onClose={() => setModal(null)} />}
+      {modal === 'group' && <NewGroupModal onClose={() => setModal(null)} />}
     </div>
-  )
+  );
 }
 
-export default function ChatPage() {
-  const currentUser = useStore((s) => s.currentUser)
-  const conversations = useStore((s) => s.conversations)
-  const activeConversationId = useStore((s) => s.activeConversationId)
-  const setConversations = useStore((s) => s.setConversations)
-  const setActiveConversation = useStore((s) => s.setActiveConversation)
+//  Empty state
 
-  const activeConversation = conversations.find(
-    (c) => c.id === activeConversationId
-  )
-
-  useEffect(() => {
-    chatAPI.getConversations().then((res) => {
-      setConversations(res.data)
-      // Auto-select first conversation if none active
-      if (res.data.length > 0 && !activeConversationId) {
-        setActiveConversation(res.data[0].id)
-      }
-    })
-  }, [])
-
+function EmptyState({ onNewDM, onNewGroup }) {
   return (
-    <div style={styles.app}>
-      {/* Sidebar */}
-      <div style={styles.sidebar}>
-        <div style={styles.sidebarHeader}>
-          <span style={styles.appName}>SpoonChat</span>
-          <span style={styles.username}>@{currentUser?.username}</span>
-        </div>
-        {conversations.map((conv) => {
-          const other = conv.participants.find((p) => p.id !== currentUser?.id)
-          return (
-            <div
-              key={conv.id}
-              style={{
-                ...styles.convItem,
-                background: conv.id === activeConversationId
-                  ? '#2a2a2a' : 'transparent',
-              }}
-              onClick={() => setActiveConversation(conv.id)}
-            >
-              <div style={styles.convName}>
-                {conv.is_group ? conv.name : other?.username}
-              </div>
-              <div style={styles.convPreview}>
-                {conv.last_message ? '🔒 Encrypted message' : 'No messages yet'}
-              </div>
-            </div>
-          )
-        })}
+    <div style={{
+      flex: 1, display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center',
+      gap: 16, color: 'var(--text-2)',
+      animation: 'fadeIn 0.3s ease',
+    }}>
+      <div style={{ fontSize: 48 }}>🥄</div>
+      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 14 }}>
+        Welcome to SpoonChat
       </div>
-
-      {/* Main chat area */}
-      {activeConversation
-        ? <ConversationPanel conversation={activeConversation} />
-        : (
-          <div style={styles.empty}>
-            <p>Select a conversation to start chatting</p>
-          </div>
-        )
-      }
+      <div style={{ fontSize: 13 }}>
+        Start a conversation or pick one from the sidebar
+      </div>
+      <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+        <Button variant="subtle" onClick={onNewDM}>✎ New message</Button>
+        <Button variant="subtle" onClick={onNewGroup}>⊕ New group</Button>
+      </div>
     </div>
-  )
-}
-
-const styles = {
-  app: { display: 'flex', height: '100vh', background: '#0f0f0f', color: '#fff' },
-  sidebar: { width: '280px', borderRight: '1px solid #2a2a2a', display: 'flex', flexDirection: 'column' },
-  sidebarHeader: { padding: '1.25rem', borderBottom: '1px solid #2a2a2a' },
-  appName: { display: 'block', fontWeight: '600', fontSize: '1.1rem' },
-  username: { fontSize: '0.8rem', color: '#666' },
-  convItem: { padding: '0.9rem 1.25rem', cursor: 'pointer', borderBottom: '1px solid #1a1a1a' },
-  convName: { fontWeight: '500', marginBottom: '0.2rem' },
-  convPreview: { fontSize: '0.8rem', color: '#666' },
-  panel: { flex: 1, display: 'flex', flexDirection: 'column' },
-  header: { padding: '1rem 1.25rem', borderBottom: '1px solid #2a2a2a', background: '#1a1a1a' },
-  headerName: { fontWeight: '600', display: 'block' },
-  headerSub: { fontSize: '0.75rem', color: '#4CAF50' },
-  messages: { flex: 1, overflowY: 'auto', padding: '1rem 0' },
-  typing: { padding: '0 1rem', color: '#666', fontSize: '0.8rem', fontStyle: 'italic' },
-  empty: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#444' },
+  );
 }
