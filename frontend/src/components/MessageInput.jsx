@@ -1,68 +1,99 @@
-import { useState, useRef } from 'react'
+// MessageInput — the text box and send button at the bottom of the chat.
+// Auto-resizes as the user types.
+// Enter sends, Shift+Enter inserts a newline.
+// Broadcasts typing indicator with a 2-second debounce.
 
-export default function MessageInput({ onSend, onTyping }) {
-  const [text, setText] = useState('')
-  const typingTimer = useRef(null)
+import { useState, useRef } from 'react';
 
-  const handleChange = (e) => {
-    setText(e.target.value)
-    onTyping(true)
-    // Clear existing timer — reset the "stopped typing" countdown
-    clearTimeout(typingTimer.current)
-    // After 2 seconds of no typing, broadcast "stopped typing"
-    typingTimer.current = setTimeout(() => onTyping(false), 2000)
+const TYPING_TIMEOUT_MS = 2000;
+
+export function MessageInput({ onSend, onTyping, disabled }) {
+  const [text, setText]       = useState('');
+  const typingTimer            = useRef(null);
+  const textareaRef            = useRef(null);
+
+  function handleChange(e) {
+    setText(e.target.value);
+
+    // Typing indicator
+    onTyping(true);
+    clearTimeout(typingTimer.current);
+    typingTimer.current = setTimeout(() => onTyping(false), TYPING_TIMEOUT_MS);
+
+    // Auto-resize
+    e.target.style.height = 'auto';
+    e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
   }
 
-  const handleSend = () => {
-    const trimmed = text.trim()
-    if (!trimmed) return
-    onSend(trimmed)
-    setText('')
-    onTyping(false)
-    clearTimeout(typingTimer.current)
+  function handleSend() {
+    const trimmed = text.trim();
+    if (!trimmed || disabled) return;
+    onSend(trimmed);
+    setText('');
+    onTyping(false);
+    clearTimeout(typingTimer.current);
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
   }
 
-  const handleKeyDown = (e) => {
-    // Send on Enter, new line on Shift+Enter
+  function handleKeyDown(e) {
     if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
+      e.preventDefault();
+      handleSend();
     }
   }
 
+  const canSend = text.trim().length > 0 && !disabled;
+
   return (
-    <div style={styles.container}>
+    <div style={{
+      padding: '12px 16px',
+      borderTop: '1px solid var(--border)',
+      background: 'var(--bg-1)',
+      display: 'flex', gap: 10, alignItems: 'flex-end',
+    }}>
       <textarea
-        style={styles.input}
-        placeholder="Message..."
+        ref={textareaRef}
         value={text}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
+        disabled={disabled}
+        placeholder={
+          disabled
+            ? 'Select a conversation...'
+            : 'Message… (Enter to send, Shift+Enter for new line)'
+        }
         rows={1}
+        style={{
+          flex: 1, padding: '10px 14px',
+          background: 'var(--bg-2)',
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-md)',
+          color: 'var(--text-0)',
+          fontSize: 14, resize: 'none', outline: 'none',
+          lineHeight: 1.5, minHeight: 42, maxHeight: 120,
+          fontFamily: 'var(--font-sans)',
+          transition: 'border-color var(--transition)',
+        }}
+        onFocus={e => (e.target.style.borderColor = 'var(--accent)')}
+        onBlur={e  => (e.target.style.borderColor = 'var(--border)')}
       />
-      <button style={styles.button} onClick={handleSend}>
-        Send
+      <button
+        onClick={handleSend}
+        disabled={!canSend}
+        style={{
+          width: 42, height: 42,
+          borderRadius: 'var(--radius-md)',
+          background: canSend ? 'var(--accent)' : 'var(--bg-3)',
+          border: 'none',
+          cursor: canSend ? 'pointer' : 'not-allowed',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 18, flexShrink: 0,
+          transition: 'all var(--transition)',
+          color: 'var(--text-0)',
+        }}
+      >
+        ↑
       </button>
     </div>
-  )
-}
-
-const styles = {
-  container: {
-    display: 'flex', gap: '0.5rem',
-    padding: '1rem', borderTop: '1px solid #2a2a2a',
-    background: '#1a1a1a',
-  },
-  input: {
-    flex: 1, padding: '0.75rem',
-    borderRadius: '8px', border: '1px solid #333',
-    background: '#111', color: '#fff',
-    fontSize: '0.95rem', resize: 'none', outline: 'none',
-  },
-  button: {
-    padding: '0 1.25rem', borderRadius: '8px',
-    background: '#E8490F', color: '#fff',
-    border: 'none', cursor: 'pointer',
-    fontWeight: '500',
-  },
+  );
 }

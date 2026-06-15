@@ -56,3 +56,13 @@ postgres-data/
 # Operating System Files
 .DS_Store
 Thumbs.db
+
+# Ignore the frontend readme file (it is for the docs only at least for now)
+frontend/Readme.md
+
+
+# Documentation folder
+
+docs/
+documentation/
+doc/

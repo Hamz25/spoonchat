@@ -1,7 +1,79 @@
 services:
-  redis:
-    image: redis
-    container_name: my-redis
-    ports:
-      - "6379:6379"
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: spoonchat-db
     restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-spoonchat}
+      POSTGRES_USER: ${POSTGRES_USER:-spoon}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-spoon}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - spoonchat-net
+
+  # ── Redis ───────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: spoonchat-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - spoonchat-net
+
+  # ── Django Backend ──────────────────────────────────────────────────────────
+  backend:
+    image: ${DOCKER_HUB_USERNAME:-spoon20}/spoonchat-backend:${IMAGE_TAG:-latest}
+    container_name: spoonchat-backend
+    restart: unless-stopped
+    environment:
+      DEBUG: "False"
+      SECRET_KEY: ${SECRET_KEY}
+      DATABASE_URL: postgres://${POSTGRES_USER:-spoon}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-spoonchat}
+      REDIS_URL: redis://redis:6379/0
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - static_files:/app/staticfiles
+    networks:
+      - spoonchat-net
+
+  # ── React Frontend (nginx) ───────────────────────────────────────────────────
+  frontend:
+    image: ${DOCKER_HUB_USERNAME:-spoon20}/spoonchat-frontend:${IMAGE_TAG:-latest}
+    container_name: spoonchat-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - spoonchat-net
+
+volumes:
+  postgres_data:
+  redis_data:
+  static_files:
+
+networks:
+  spoonchat-net:
+    driver: bridge

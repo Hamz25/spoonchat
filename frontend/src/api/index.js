@@ -52,7 +52,8 @@ export const authAPI = {
     register: (data) => api.post('/api/auth/register/', data),
     login: (data) => api.post('/api/auth/login/', data),
     getProfile: () => api.get('/api/auth/profile/'),
-    uploadPublicKey: (publicKey) => api.post('/api/auth/upload_key/', { public_key: publicKey }),
+    uploadPublicKey: (publicKey) => api.post('/api/auth/profile/public_key/', { public_key: publicKey }),
+    searchUsers: (q) => api.get(`/api/auth/users/search/?q=${encodeURIComponent(q)}`),
 }
 
 // chat endpoints
@@ -64,4 +65,8 @@ export const chatAPI = {
         api.get(`/api/chat/conversations/${conversationId}/messages/`, {
         params: { limit, offset },
         }),
+    deleteConversation: (conversationId, forEveryone) =>
+        api.delete(`/api/chat/conversations/${conversationId}/`, {
+        data: { for_everyone: forEveryone } // Send the checkbox status to Django
+    }),
 }

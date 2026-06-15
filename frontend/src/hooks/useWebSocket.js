@@ -89,7 +89,9 @@
             sender_username: data.sender_username,
             decrypted: '[Unable to decrypt — missing public key]',
             timestamp: data.timestamp,
+            delivered: true,
             read: false,
+            pending: false,
         })
         return
         }
@@ -110,6 +112,8 @@
         ciphertext: data.ciphertext,
         timestamp: data.timestamp,
         read: false,
+        delivered: true,
+        pending: false,
         })
     }
 
