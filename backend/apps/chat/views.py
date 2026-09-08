@@ -78,9 +78,20 @@ class MessageHistoryView(APIView):
                 {'error': 'Conversation not found.'},
                 status=status.HTTP_404_NOT_FOUND
                 )
-        limit = int(request.query_params.get('limit', 50))
-        offset = int(request.query_params.get('offset', 0))
+        MAX_LIMIT = 100
 
+        try:
+            limit = int(request.query_params.get('limit', 50))
+            offset = int(request.query_params.get('offset', 0))
+        except ValueError:
+            return Response(
+                {'error': 'limit and offset must be integers.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        limit = max(1, min(limit, MAX_LIMIT))
+        offset = max(0, offset)
+        
         messages = Message.objects.filter(
             conversation=conversation
             ).select_related('sender')[offset:offset+limit]
