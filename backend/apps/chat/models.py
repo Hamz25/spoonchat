@@ -63,9 +63,13 @@ class Message(models.Model):
         delivered = models.BooleanField(default=False)
         # Has the message been delivered to the recipient's device? 
         read = models.BooleanField(default=False)
-        # Has the recipient opened and seen the message?
-        # This powers the blue double checkmark in apps like WhatsApp.
-        # Separate from delivered — you can receive a message without reading it.
+        read_by = models.ForeignKey(
+            settings.AUTH_USER_MODEL,
+            on_delete=models.SET_NULL,
+            null=True,
+            blank=True,
+            related_name='read_messages'
+        )
 
         class Meta:
             db_table = 'messages'

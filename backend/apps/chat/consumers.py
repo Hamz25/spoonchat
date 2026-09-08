@@ -178,5 +178,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         )
     @database_sync_to_async
     def mark_message_read(self, message_id):
-        Message.objects.filter(id=message_id, conversation=self.conversation).update(read_by=self.user)
+        Message.objects.filter(
+            id=message_id, conversation=self.conversation
+        ).update(read=True, read_by=self.user)
             
