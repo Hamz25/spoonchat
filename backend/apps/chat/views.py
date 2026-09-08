@@ -45,7 +45,7 @@ class ConversationListView(APIView):
                     ).first()
             if existing:
                 serializer = ConversationSerializer(
-                    existing.first(),
+                    existing,
                     context={'request': request}
                     )
                 return Response(serializer.data, status=status.HTTP_200_OK)
